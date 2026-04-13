@@ -23,7 +23,7 @@ export default function Sidebar({ user, activeTab, setActiveTab, onLogout }) {
         <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-2 rounded-xl">
           <Brain className="w-6 h-6 text-white" />
         </div>
-        <h1 className="text-xl font-bold tracking-tight text-slate-800">IntelliLearn</h1>
+        <h1 className="text-xl font-bold tracking-tight text-slate-800">EduAI</h1>
       </div>
 
       <div className="px-4 py-2 flex-1 space-y-2">

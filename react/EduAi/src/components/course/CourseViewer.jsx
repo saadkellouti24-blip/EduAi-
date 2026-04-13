@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronRight, Brain, Loader, Sparkles, Check, X, MessageSquare, FileText, ArrowLeft, Upload } from 'lucide-react';
+import { ChevronRight, Brain, Loader, Check, X, MessageSquare, ArrowLeft, Upload } from 'lucide-react';
 import { callGemini } from '../../services/gemini';
 
-export default function CourseViewer({ course: initialCourse, onBack }) {
+// 1. AJOUT : On ajoute `onQuizSuccess` dans les paramètres (props)
+export default function CourseViewer({ course: initialCourse, onBack, userRole, onCourseImported, onQuizSuccess }) {
   const [course, setCourse] = useState(initialCourse);
   const [activeChapter, setActiveChapter] = useState(initialCourse.chapters?.[0]);
 
@@ -13,29 +14,28 @@ export default function CourseViewer({ course: initialCourse, onBack }) {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const chatEndRef = useRef(null);
 
-  // States Résumé et Quiz
-  const [summary, setSummary] = useState(null);
-  const [isSummaryLoading, setIsSummaryLoading] = useState(false);
+  // States Quiz
   const [quizData, setQuizData] = useState(null);
+  const [isQuizLoading, setIsQuizLoading] = useState(false);
+  const [selectedAnswers, setSelectedAnswers] = useState({});
+  const [quizSubmitted, setQuizSubmitted] = useState(false);
 
   // State Upload
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
-  useEffect(() => { setSummary(null); setQuizData(null); }, [activeChapter]);
+  useEffect(() => { setQuizData(null); setSelectedAnswers({}); setQuizSubmitted(false); }, [activeChapter]);
 
   // ─── PARSING DU FICHIER IMPORTÉ ───────────────────────────────────────────
 
   const parseFileToChapters = (content, filename) => {
     const ext = filename.split('.').pop().toLowerCase();
 
-    // Cas JSON : structure déjà formée { title, chapters: [...] }
     if (ext === 'json') {
       try {
         const parsed = JSON.parse(content);
         if (parsed.chapters && Array.isArray(parsed.chapters)) return parsed;
-        // JSON plat : chaque clé = un chapitre
         const chapters = Object.entries(parsed).map(([key, val]) => ({
           title: key,
           content: typeof val === 'string' ? val : JSON.stringify(val, null, 2),
@@ -46,7 +46,6 @@ export default function CourseViewer({ course: initialCourse, onBack }) {
       }
     }
 
-    // Cas TXT / MD : découpe sur les titres # ou === / ---
     const lines = content.split('\n');
     const chapters = [];
     let currentTitle = null;
@@ -60,24 +59,19 @@ export default function CourseViewer({ course: initialCourse, onBack }) {
     };
 
     for (const line of lines) {
-      // Titres Markdown niveau 1 ou 2
       if (/^#{1,2}\s+/.test(line)) {
         flush();
         currentTitle = line.replace(/^#{1,2}\s+/, '');
-      }
-      // Titres soulignés (===)
-      else if (/^={3,}$/.test(line.trim()) && currentContent.length > 0) {
+      } else if (/^={3,}$/.test(line.trim()) && currentContent.length > 0) {
         const prevTitle = currentContent.pop();
         flush();
         currentTitle = prevTitle;
-      }
-      else {
+      } else {
         currentContent.push(line);
       }
     }
     flush();
 
-    // Aucun titre trouvé → tout le fichier = un seul chapitre
     if (chapters.length === 0) {
       chapters.push({ title: 'Contenu importé', content: content.trim() });
     }
@@ -90,61 +84,149 @@ export default function CourseViewer({ course: initialCourse, onBack }) {
 
   // ─── HANDLER UPLOAD ────────────────────────────────────────────────────────
 
-  const handleFileUpload = (e) => {
+  const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const allowedTypes = ['text/plain', 'application/json', 'text/markdown', 'text/x-markdown'];
-    const allowedExts = ['txt', 'json', 'md'];
+    const allowedExts = ['txt', 'json', 'md', 'pdf'];
     const ext = file.name.split('.').pop().toLowerCase();
 
-    if (!allowedTypes.includes(file.type) && !allowedExts.includes(ext)) {
-      alert('Format non supporté. Veuillez importer un fichier .txt, .md ou .json');
+    if (!allowedExts.includes(ext)) {
+      alert('Format non supporté. Veuillez importer un fichier .txt, .md, .json ou .pdf');
       return;
     }
 
     setIsUploading(true);
-    const reader = new FileReader();
 
-    reader.onload = (event) => {
-      try {
-        const content = event.target.result;
-        const parsed = parseFileToChapters(content, file.name);
-        setCourse(parsed);
-        setActiveChapter(parsed.chapters?.[0]);
-        setSummary(null);
-        setQuizData(null);
-        setMessages([{ role: 'ai', text: `Cours "${parsed.title}" importé avec succès ! ${parsed.chapters.length} chapitre(s) trouvé(s). Que voulez-vous savoir ?` }]);
-      } catch (err) {
-        alert("Impossible de lire ce fichier. Vérifiez son format.");
-      } finally {
-        setIsUploading(false);
-        // Reset input pour permettre le re-upload du même fichier
-        if (fileInputRef.current) fileInputRef.current.value = '';
+    try {
+      let content = '';
+
+      if (ext === 'pdf') {
+        const pdfjsLib = await import('pdfjs-dist');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+          'pdfjs-dist/build/pdf.worker.min.mjs',
+          import.meta.url
+        ).toString();
+
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          content += textContent.items.map(item => item.str).join(' ') + '\n\n';
+        }
+      } else {
+        content = await file.text();
       }
-    };
 
-    reader.onerror = () => {
-      alert("Erreur lors de la lecture du fichier.");
+      const parsed = parseFileToChapters(content, file.name);
+
+      const response = await fetch('http://127.0.0.1:8000/api/courses', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          title: parsed.title,
+          description: '',
+          chapters: parsed.chapters
+        })
+      });
+
+      const data = await response.json();
+
+      setCourse(data.course || parsed);
+      setActiveChapter((data.course || parsed).chapters?.[0]);
+      setQuizData(null);
+      setMessages([{ role: 'ai', text: `Cours "${parsed.title}" importé et sauvegardé ! ${parsed.chapters.length} chapitre(s). Que voulez-vous savoir ?` }]);
+
+      if (onCourseImported) onCourseImported(data.course || parsed);
+
+    } catch (err) {
+      alert("Impossible de lire ce fichier. Vérifiez son format.");
+    } finally {
       setIsUploading(false);
-    };
-
-    reader.readAsText(file, 'UTF-8');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   // ─── FONCTIONS IA ─────────────────────────────────────────────────────────
 
   const sendChatMessage = async () => { /* ... identique à avant ... */ };
-  const generateQuiz = async () => { /* ... identique à avant ... */ };
 
-  const generateSummary = async () => {
-    setIsSummaryLoading(true);
+  // ─── GÉNÉRATION QCM ───────────────────────────────────────────────────────
+
+  const generateQuiz = async () => {
+    setIsQuizLoading(true);
+    setQuizData(null);
+    setSelectedAnswers({});
+    setQuizSubmitted(false);
     try {
-      const prompt = `Fais un résumé très concis et clair avec des tirets (points clés) de ce texte de cours : """${activeChapter.content}"""`;
-      const responseText = await callGemini(prompt);
-      setSummary(responseText);
-    } catch { alert("Erreur lors de la génération du résumé."); }
-    finally { setIsSummaryLoading(false); }
+      const maxLength = 5000;
+      let safeContent = activeChapter.content;
+      if (safeContent.length > maxLength) {
+        safeContent = safeContent.substring(0, maxLength) + "\n...[texte tronqué car trop long]...";
+      }
+
+      const prompt = `
+        À partir de ce contenu de cours, génère 5 questions QCM en français.
+        Réponds UNIQUEMENT en JSON valide avec ce format exact :
+        {
+          "questions": [
+            {
+              "question": "Texte de la question ?",
+              "options": ["Option A", "Option B", "Option C", "Option D"],
+              "answer": 0
+            }
+          ]
+        }
+        "answer" est l'index (0-3) de la bonne réponse.
+        Contenu du cours : """${safeContent}"""
+      `;
+      
+      const responseText = await callGemini(prompt, true);
+      
+      const clean = responseText.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(clean);
+      setQuizData(parsed);
+    } catch (err) {
+      console.error("Détail de l'erreur lors de la génération du QCM :", err);
+      alert("Erreur lors de la génération du QCM. Le texte est peut-être encore trop complexe.");
+    } finally {
+      setIsQuizLoading(false);
+    }
+  };
+
+  const handleSelectAnswer = (qIndex, oIndex) => {
+    if (quizSubmitted) return;
+    setSelectedAnswers(prev => ({ ...prev, [qIndex]: oIndex }));
+  };
+
+  // 2. MODIFICATION : C'est ici qu'on déclenche le compteur si le score est bon !
+  const handleSubmitQuiz = () => {
+    if (Object.keys(selectedAnswers).length < quizData.questions.length) {
+      alert("Veuillez répondre à toutes les questions.");
+      return;
+    }
+    
+    setQuizSubmitted(true);
+
+    // On calcule le score
+    const score = quizData.questions.filter((q, i) => selectedAnswers[i] === q.answer).length;
+    
+    // Si l'étudiant a la moyenne (ou plus), on déclenche la victoire !
+    if (score >= quizData.questions.length / 2) {
+      if (onQuizSuccess) {
+        onQuizSuccess(); 
+      }
+    }
+  };
+
+  const getScore = () => {
+    if (!quizData) return 0;
+    return quizData.questions.filter((q, i) => selectedAnswers[i] === q.answer).length;
   };
 
   // ─── RENDER ───────────────────────────────────────────────────────────────
@@ -189,28 +271,31 @@ export default function CourseViewer({ course: initialCourse, onBack }) {
           ))}
         </div>
 
-        {/* UPLOAD BUTTON (bas de la sidebar) */}
-        <div className="p-3 border-t border-slate-100">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".txt,.md,.json"
-            className="hidden"
-            onChange={handleFileUpload}
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {isUploading
-              ? <><Loader className="w-4 h-4 animate-spin" /> Chargement...</>
-              : <><Upload className="w-4 h-4" /> Importer un cours</>
-            }
-          </button>
-          <p className="text-xs text-slate-400 text-center mt-2">Formats : .txt · .md · .json</p>
-        </div>
-      </div>
+        {/* UPLOAD BUTTON - Professeur seulement */}
+        {userRole === 'teacher' && (
+          <div className="p-3 border-t border-slate-100">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt,.md,.json,.pdf"
+              className="hidden"
+              onChange={handleFileUpload}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {isUploading
+                ? <><Loader className="w-4 h-4 animate-spin" /> Chargement...</>
+                : <><Upload className="w-4 h-4" /> Importer un cours</>
+              }
+            </button>
+            <p className="text-xs text-slate-400 text-center mt-2">Formats : .txt · .md · .json · .pdf</p>
+          </div>
+        )}
+
+      </div> {/* ← FIN SIDEBAR */}
 
       {/* MAIN CONTENT */}
       <div className="flex-1 overflow-y-auto p-12 relative bg-white">
@@ -220,16 +305,87 @@ export default function CourseViewer({ course: initialCourse, onBack }) {
 
             {/* BOUTONS ACTIONS IA */}
             <div className="flex gap-4 mb-8">
-              <button onClick={generateSummary} disabled={isSummaryLoading} className="bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg font-bold hover:bg-indigo-100 flex items-center gap-2 text-sm">
-                {isSummaryLoading ? <Loader className="w-4 h-4 animate-spin"/> : <FileText className="w-4 h-4"/>} Résumé Rapide IA
+              <button
+                onClick={generateQuiz}
+                disabled={isQuizLoading}
+                className="bg-emerald-50 text-emerald-700 px-4 py-2 rounded-lg font-bold hover:bg-emerald-100 flex items-center gap-2 text-sm"
+              >
+                {isQuizLoading ? <Loader className="w-4 h-4 animate-spin"/> : <Brain className="w-4 h-4"/>}
+                Générer QCM
               </button>
             </div>
 
-            {/* AFFICHAGE DU RÉSUMÉ */}
-            {summary && (
-              <div className="bg-amber-50 border border-amber-200 p-6 rounded-2xl mb-8 animate-in slide-in-from-top-4">
-                <h3 className="font-bold text-amber-800 flex items-center gap-2 mb-3"><Sparkles className="w-4 h-4"/> Synthèse IA</h3>
-                <div className="prose prose-sm text-amber-900 whitespace-pre-wrap">{summary}</div>
+            {/* AFFICHAGE DU QCM */}
+            {quizData && (
+              <div className="bg-white border border-slate-200 rounded-2xl mb-8 overflow-hidden animate-in slide-in-from-top-4">
+                <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <Brain className="w-4 h-4"/> QCM — {activeChapter.title}
+                  </h3>
+                  {quizSubmitted && (
+                    <span className="bg-white text-emerald-700 font-black px-3 py-1 rounded-full text-sm">
+                      {getScore()} / {quizData.questions.length}
+                    </span>
+                  )}
+                </div>
+
+                <div className="p-6 space-y-6">
+                  {quizData.questions.map((q, qIndex) => (
+                    <div key={qIndex}>
+                      <p className="font-bold text-slate-800 mb-3 text-sm">
+                        {qIndex + 1}. {q.question}
+                      </p>
+                      <div className="space-y-2">
+                        {q.options.map((option, oIndex) => {
+                          const isSelected = selectedAnswers[qIndex] === oIndex;
+                          const isCorrect = q.answer === oIndex;
+                          let style = 'border-slate-200 bg-slate-50 text-slate-700';
+                          if (quizSubmitted) {
+                            if (isCorrect) style = 'border-emerald-400 bg-emerald-50 text-emerald-800';
+                            else if (isSelected && !isCorrect) style = 'border-red-400 bg-red-50 text-red-800';
+                          } else if (isSelected) {
+                            style = 'border-indigo-400 bg-indigo-50 text-indigo-800';
+                          }
+                          return (
+                            <button
+                              key={oIndex}
+                              onClick={() => handleSelectAnswer(qIndex, oIndex)}
+                              className={`w-full text-left px-4 py-2.5 rounded-xl border text-sm font-medium transition-all flex items-center justify-between ${style}`}
+                            >
+                              <span>{option}</span>
+                              {quizSubmitted && isCorrect && <Check className="w-4 h-4 text-emerald-600" />}
+                              {quizSubmitted && isSelected && !isCorrect && <X className="w-4 h-4 text-red-500" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+
+                  {!quizSubmitted ? (
+                    <button
+                      onClick={handleSubmitQuiz}
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl transition-all"
+                    >
+                      Valider mes réponses
+                    </button>
+                  ) : (
+                    <div className="text-center">
+                      <p className="font-black text-2xl text-slate-800 mb-1">
+                        {getScore() === quizData.questions.length ? '🎉 Parfait !' : getScore() >= quizData.questions.length / 2 ? '👍 Bien !' : '📚 Révisez !'}
+                      </p>
+                      <p className="text-slate-500 text-sm mb-4">
+                        Score : {getScore()} / {quizData.questions.length}
+                      </p>
+                      <button
+                        onClick={generateQuiz}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 px-6 rounded-xl text-sm transition-all"
+                      >
+                        Nouveau QCM
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -240,7 +396,6 @@ export default function CourseViewer({ course: initialCourse, onBack }) {
         )}
       </div>
 
-      {/* CHATBOT LATÉRAL ... (identique à avant) ... */}
     </div>
   );
 }

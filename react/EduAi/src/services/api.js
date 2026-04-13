@@ -2,7 +2,6 @@ import axios from 'axios';
 
 const API_URL = 'http://localhost:8000/api';
 
-
 // Instance Axios configurée avec le token
 const apiClient = axios.create({
   baseURL: API_URL,
@@ -25,7 +24,7 @@ export const api = {
     const response = await apiClient.post('/login', { email, password });
     return response.data;
   },
-  
+
   // --- CLASSES & UTILISATEURS ---
   getClasses: async () => {
     const response = await apiClient.get('/classes');
@@ -48,5 +47,8 @@ export const api = {
   createCourse: async (courseData) => {
     const response = await apiClient.post('/courses', courseData);
     return response.data;
-  }
+  },
+  deleteCourse: async (id) => {
+    await apiClient.delete(`/courses/${id}`);
+  },
 };

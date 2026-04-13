@@ -2,7 +2,8 @@ import React from 'react';
 import { Sparkles, BookOpen, CheckCircle } from 'lucide-react';
 import CourseGrid from '../course/CourseGrid';
 
-export default function StudentDashboard({ courses, onOpenCourse, user, classes }) {
+// 1. AJOUT : On ajoute `quizzesPassed` dans les paramètres (avec 0 par défaut pour éviter les erreurs)
+export default function StudentDashboard({ courses, onOpenCourse, user, classes, quizzesPassed = 0 }) {
   const studentClass = classes.find(c => c.id === user.classId);
 
   return (
@@ -16,7 +17,6 @@ export default function StudentDashboard({ courses, onOpenCourse, user, classes 
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         
-        
         <div className="bg-white rounded-3xl p-6 border border-slate-200 flex flex-col justify-center">
           <h3 className="text-slate-500 font-medium flex items-center gap-2"><BookOpen className="w-5 h-5 text-blue-500" /> Cours Disponibles</h3>
           <div className="text-4xl font-extrabold text-slate-800 mt-2">{courses.length}</div>
@@ -24,8 +24,10 @@ export default function StudentDashboard({ courses, onOpenCourse, user, classes 
 
         <div className="bg-white rounded-3xl p-6 border border-slate-200 flex flex-col justify-center">
           <h3 className="text-slate-500 font-medium flex items-center gap-2"><CheckCircle className="w-5 h-5 text-emerald-500" /> Quiz Réussis</h3>
-          <div className="text-4xl font-extrabold text-slate-800 mt-2">0</div>
+          {/* 2. MODIFICATION : On remplace le "0" en dur par notre variable quizzesPassed */}
+          <div className="text-4xl font-extrabold text-slate-800 mt-2">{quizzesPassed}</div>
         </div>
+        
       </div>
 
       <div>

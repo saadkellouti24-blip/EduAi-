@@ -30,7 +30,7 @@ export default function LoginScreen({ onLoginSuccess }) {
           <div className="w-20 h-20 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-indigo-200">
             <Brain className="w-10 h-10 text-white" />
           </div>
-          <h2 className="text-3xl font-extrabold text-slate-800 mb-2 tracking-tight">IntelliLearn</h2>
+          <h2 className="text-3xl font-extrabold text-slate-800 mb-2 tracking-tight">EduAI</h2>
           <p className="text-slate-500 mb-8 font-medium">L'apprentissage propulsé par l'IA</p>
           
           {error && <div className="bg-red-50 text-red-600 p-3 rounded-lg mb-4 text-sm font-medium">{error}</div>}

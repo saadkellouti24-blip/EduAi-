@@ -1,11 +1,12 @@
 <?php
 namespace App\Http\Controllers\Api;
+
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use App\Models\User;
-use App\Models\SchoolClass;
+use App\Models\Classe; // <-- CORRECTION 1 : Le vrai nom de ton modèle avec un 'e'
 use App\Models\Course;
 
 class EdTechController extends Controller {
@@ -19,12 +20,14 @@ class EdTechController extends Controller {
     }
 
     public function storeClass(Request $request) {
-        $class = SchoolClass::create(['name' => $request->name, 'teacher_id' => auth()->id()]);
+        // <-- CORRECTION 2 : Utiliser "Classe::" au lieu de "SchoolClass::"
+        $class = Classe::create(['name' => $request->name, 'teacher_id' => auth()->id()]);
         return response()->json(['class' => $class]);
     }
 
     public function getClasses() {
-        return response()->json(SchoolClass::with('students')->get());
+        // <-- CORRECTION 3 : Utiliser "Classe::" au lieu de "SchoolClass::"
+        return response()->json(Classe::with('students')->get());
     }
 
     public function addStudent(Request $request) {
@@ -39,12 +42,17 @@ class EdTechController extends Controller {
     public function storeCourse(Request $request) {
         $course = Course::create(['title' => $request->title, 'description' => $request->description, 'teacher_id' => auth()->id()]);
         foreach ($request->chapters as $index => $chapter) {
-            $course->chapters()->create(['title' => $chapter['title'], 'content' => $chapter['content'], 'order_index' => $index]);
+            $course->chapters()->create(['title' => $chapter['title'], 'content' => $chapter['content'] ?? 'Contenu en cours de generation...', 'order_index' => $index]);
         }
         return response()->json(['course' => $course->load('chapters')]);
     }
 
     public function getCourses() {
         return response()->json(Course::with('chapters')->get());
+    }
+    
+    public function deleteCourse($id) {
+        Course::findOrFail($id)->delete();
+        return response()->json(['message' => 'Cours supprimé']);
     }
 }

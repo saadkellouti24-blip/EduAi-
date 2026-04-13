@@ -11,7 +11,6 @@ export default function ClassesManager({ classes, users, onAddClass, onAddStuden
     <div className="space-y-8 animate-in fade-in">
       <div>
         <h2 className="text-3xl font-bold text-slate-800 tracking-tight mb-2">Gestion des Classes</h2>
-        <p className="text-slate-500">Gérez vos groupes d'étudiants (Architecture Laravel en arrière-plan).</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

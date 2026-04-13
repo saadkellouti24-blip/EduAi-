@@ -23,49 +23,87 @@ export default function TeacherDashboard({ onCourseGenerated, courses }) {
     if (ext === 'json') {
       try {
         const parsed = JSON.parse(content);
-        // Si c'est un objet avec une clé "content", on la prend
         if (typeof parsed.content === 'string') return { title: parsed.title || '', content: parsed.content };
         return { title: parsed.title || '', content: JSON.stringify(parsed, null, 2) };
       } catch { /* fallback */ }
     }
-    // TXT / MD : on retourne tout le texte comme contenu
     return { title: '', content: content.trim() };
   };
 
   // ─── UPLOAD FICHIER POUR UN CHAPITRE ──────────────────────────────────────
-  const handleChapterFileUpload = (e, index) => {
+  const handleChapterFileUpload = async (e, index) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const allowedExts = ['txt', 'md', 'json'];
+    const allowedExts = ['txt', 'md', 'json', 'pdf'];
     const ext = file.name.split('.').pop().toLowerCase();
+
     if (!allowedExts.includes(ext)) {
-      alert('Format non supporté. Utilisez .txt, .md ou .json');
+      alert('Format non supporté. Utilisez .txt, .md, .json ou .pdf');
       return;
     }
 
     setUploadingIndex(index);
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const { title, content } = parseFileContent(event.target.result, file.name);
+
+    try {
+      let content = '';
+
+      if (ext === 'pdf') {
+        const pdfjsLib = await import('pdfjs-dist');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+          'pdfjs-dist/build/pdf.worker.min.mjs',
+          import.meta.url
+        ).toString();
+
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          content += textContent.items.map(item => item.str).join(' ') + '\n\n';
+        }
+
         setChapters(prev => prev.map((ch, i) => {
           if (i !== index) return ch;
           return {
             ...ch,
-            title: title || ch.title || file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' '),
+            title: ch.title || file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' '),
             content,
           };
         }));
-      } catch {
-        alert("Impossible de lire ce fichier.");
-      } finally {
-        setUploadingIndex(null);
-        if (fileInputRefs.current[index]) fileInputRefs.current[index].value = '';
+
+      } else {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const { title, content: parsedContent } = parseFileContent(event.target.result, file.name);
+            setChapters(prev => prev.map((ch, i) => {
+              if (i !== index) return ch;
+              return {
+                ...ch,
+                title: title || ch.title || file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' '),
+                content: parsedContent,
+              };
+            }));
+          } catch {
+            alert("Impossible de lire ce fichier.");
+          } finally {
+            setUploadingIndex(null);
+            if (fileInputRefs.current[index]) fileInputRefs.current[index].value = '';
+          }
+        };
+        reader.onerror = () => { alert("Erreur de lecture."); setUploadingIndex(null); };
+        reader.readAsText(file, 'UTF-8');
+        return; 
       }
-    };
-    reader.onerror = () => { alert("Erreur de lecture."); setUploadingIndex(null); };
-    reader.readAsText(file, 'UTF-8');
+
+    } catch {
+      alert("Impossible de lire ce fichier PDF.");
+    } finally {
+      setUploadingIndex(null);
+      if (fileInputRefs.current[index]) fileInputRefs.current[index].value = '';
+    }
   };
 
   // ─── GESTION CHAPITRES ────────────────────────────────────────────────────
@@ -81,27 +119,51 @@ export default function TeacherDashboard({ onCourseGenerated, courses }) {
   const updateChapter = (index, field, value) =>
     setChapters(prev => prev.map((ch, i) => i === index ? { ...ch, [field]: value } : ch));
 
-  // ─── GÉNÉRATION IA ────────────────────────────────────────────────────────
+  // ─── GÉNÉRATION IA (CORRIGÉE POUR GROQ) ───────────────────────────────────
   const handleGenerateIA = async () => {
     if (!topic) return;
     setIsGenerating(true);
     try {
-      const prompt = `Génère un plan de cours structuré et le contenu détaillé pour le sujet : "${topic}". En français. Contenu pédagogique.`;
-      const schema = {
-        type: "OBJECT",
-        properties: {
-          title: { type: "STRING" }, description: { type: "STRING" },
-          chapters: { type: "ARRAY", items: { type: "OBJECT", properties: { title: { type: "STRING" }, content: { type: "STRING" } } } }
+      // On demande explicitement à Groq de répondre avec notre structure JSON
+      const prompt = `
+        Génère un plan de cours structuré et le contenu détaillé pour le sujet : "${topic}". En français. Contenu pédagogique.
+        Tu dois répondre UNIQUEMENT en JSON valide avec le format exact ci-dessous, sans aucun texte avant ou après :
+        {
+          "title": "Titre du cours",
+          "description": "Description courte du cours",
+          "chapters": [
+            {
+              "title": "Titre du chapitre 1",
+              "content": "Contenu complet du chapitre 1"
+            }
+          ]
         }
-      };
-      const response = await callGemini(prompt, true, schema);
-      const data = JSON.parse(response);
+      `;
+      
+      // On met "true" en 2ème argument pour forcer le mode JSON
+      const response = await callGemini(prompt, true);
+      
+      // On nettoie les potentielles balises Markdown que l'IA pourrait rajouter
+      const cleanResponse = response.replace(/```json|```/g, '').trim();
+      const data = JSON.parse(cleanResponse);
+      //  Filet de sécurité pour garantir que le format est toujours bon pour Laravel
+      if (!data.chapters) data.chapters = [];
+      data.chapters = data.chapters.map((ch, index) => ({
+        title: ch.title || `Chapitre ${index + 1}`,
+        // Si l'IA a mis le texte dans "texte" ou "body" au lieu de "content", on le rattrape
+        content: ch.content || ch.texte || ch.body || "Contenu généré incomplet."
+      }));
+      
       const savedCourse = await api.createCourse(data);
       onCourseGenerated(savedCourse.course);
       setTopic('');
       alert("Cours généré par l'IA et sauvegardé !");
-    } catch { alert("Erreur lors de la génération IA ou de la sauvegarde."); }
-    finally { setIsGenerating(false); }
+    } catch (err) { 
+      console.error("Erreur lors de la génération IA:", err);
+      alert("Erreur lors de la génération IA ou de la sauvegarde."); 
+    } finally { 
+      setIsGenerating(false); 
+    }
   };
 
   // ─── SAUVEGARDE MANUELLE ──────────────────────────────────────────────────
@@ -225,7 +287,7 @@ export default function TeacherDashboard({ onCourseGenerated, courses }) {
                       <div>
                         <input
                           type="file"
-                          accept=".txt,.md,.json"
+                          accept=".txt,.md,.jso,.pdf"
                           className="hidden"
                           ref={el => fileInputRefs.current[index] = el}
                           onChange={e => handleChapterFileUpload(e, index)}
@@ -237,7 +299,7 @@ export default function TeacherDashboard({ onCourseGenerated, courses }) {
                         >
                           {uploadingIndex === index
                             ? <><Loader className="w-4 h-4 animate-spin" /> Chargement...</>
-                            : <><Upload className="w-4 h-4" /> Importer depuis un fichier (.txt, .md, .json)</>
+                            : <><Upload className="w-4 h-4" /> Importer depuis un fichier (.txt, .md, .json, .pdf)</>
                           }
                         </button>
                         {chapter.content && (
@@ -272,6 +334,7 @@ export default function TeacherDashboard({ onCourseGenerated, courses }) {
           </button>
         </div>
       )}
+
     </div>
   );
 }

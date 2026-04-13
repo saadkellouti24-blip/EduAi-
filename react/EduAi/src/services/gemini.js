@@ -1,11 +1,14 @@
-const API_KEY = "AIzaSyA0Dnoypy-VPbwdUJ8l7XYpHzGRgokHgnM";
+const GROQ_API_KEY = "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"; // Ta clé Groq
 
 export async function fetchWithRetry(url, options, maxRetries = 5) {
   let delay = 1000;
   for (let i = 0; i < maxRetries; i++) {
     try {
       const response = await fetch(url, options);
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Erreur HTTP ${response.status}: ${errorText}`);
+      }
       return await response.json();
     } catch (error) {
       if (i === maxRetries - 1) throw error;
@@ -15,20 +18,31 @@ export async function fetchWithRetry(url, options, maxRetries = 5) {
   }
 }
 
-export async function callGemini(prompt, isJson = false, jsonSchema = null) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
-  const payload = { contents: [{ parts: [{ text: prompt }] }] };
+// On garde le nom callGemini pour ne pas casser tes autres fichiers, 
+// mais ça appelle Groq en réalité !
+export async function callGemini(prompt, isJson = false) {
+  const url = 'https://api.groq.com/openai/v1/chat/completions';
   
+  const payload = {
+    model: "llama-3.1-8b-instant", // Modèle très rapide de Groq
+    messages: [
+      { role: "user", content: prompt }
+    ]
+  };
+  
+  // Si on demande du JSON (pour le QCM)
   if (isJson) {
-    payload.generationConfig = { responseMimeType: "application/json" };
-    if (jsonSchema) payload.generationConfig.responseSchema = jsonSchema;
+    payload.response_format = { type: "json_object" };
   }
 
   const data = await fetchWithRetry(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${GROQ_API_KEY}`
+    },
     body: JSON.stringify(payload)
   });
   
-  return data.candidates?.[0]?.content?.parts?.[0]?.text;
+  return data.choices?.[0]?.message?.content;
 }
