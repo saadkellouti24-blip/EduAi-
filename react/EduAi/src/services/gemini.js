@@ -1,5 +1,4 @@
-const GROQ_API_KEY = "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"; // Ta clé Groq
-
+const GROQ_API_KEY=import.meta.env.VITE_GROQ_API_KEY
 export async function fetchWithRetry(url, options, maxRetries = 5) {
   let delay = 1000;
   for (let i = 0; i < maxRetries; i++) {
